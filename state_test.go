@@ -17,24 +17,31 @@ func TestStateMergeReceived(t *testing.T) {
 	}{
 		{
 			// empty set, valid delta
-			state{set: map[mesh.PeerName]map[string]*vctClk{}},
-			state{deltas: []delta{delta{repair: false, ttl: 1, vc: vctClk{o: 999, k: "k1", c: 1, val: "v1"}}}},
-			state{deltas: []delta{delta{repair: false, ttl: 3, vc: vctClk{o: 999, k: "k1", c: 1, val: "v1"}}}},
-			state{set: map[mesh.PeerName]map[string]*vctClk{999: map[string]*vctClk{"k1": &vctClk{o: 999, k: "k1", c: 1, val: "v1"}}}},
+			state{set: map[mesh.PeerName]map[string]*vectorclock{}},
+			state{deltas: []delta{delta{repair: false, ttl: 1, vc: vectorclock{o: 999, k: "k1", c: 1, val: "v1"}}}},
+			state{deltas: []delta{delta{repair: false, ttl: 3, vc: vectorclock{o: 999, k: "k1", c: 1, val: "v1"}}}},
+			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 1, val: "v1"}}}},
 		},
 		{
 			// existing set, newer delta
-			state{set: map[mesh.PeerName]map[string]*vctClk{999: map[string]*vctClk{"k1": &vctClk{o: 999, k: "k1", c: 1, val: "v1"}}}},
-			state{deltas: []delta{delta{repair: false, ttl: 1, vc: vctClk{o: 999, k: "k1", c: 2, val: "v2"}}}},
-			state{deltas: []delta{delta{repair: false, ttl: 3, vc: vctClk{o: 999, k: "k1", c: 2, val: "v2"}}}},
-			state{set: map[mesh.PeerName]map[string]*vctClk{999: map[string]*vctClk{"k1": &vctClk{o: 999, k: "k1", c: 2, val: "v2"}}}},
+			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 1, val: "v1"}}}},
+			state{deltas: []delta{delta{repair: false, ttl: 1, vc: vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
+			state{deltas: []delta{delta{repair: false, ttl: 3, vc: vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
+			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
 		},
 		{
 			// existing set, older delta
-			state{set: map[mesh.PeerName]map[string]*vctClk{999: map[string]*vctClk{"k1": &vctClk{o: 999, k: "k1", c: 2, val: "v2"}}}},
-			state{deltas: []delta{delta{repair: false, ttl: 1, vc: vctClk{o: 999, k: "k1", c: 1, val: "v1"}}}},
-			state{deltas: []delta{delta{repair: false, ttl: 0, vc: vctClk{o: 999, k: "k1", c: 1, val: "v1"}}}},
-			state{set: map[mesh.PeerName]map[string]*vctClk{999: map[string]*vctClk{"k1": &vctClk{o: 999, k: "k1", c: 2, val: "v2"}}}},
+			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
+			state{deltas: []delta{delta{repair: false, ttl: 1, vc: vectorclock{o: 999, k: "k1", c: 1, val: "v1"}}}},
+			state{deltas: []delta{delta{repair: false, ttl: 0, vc: vectorclock{o: 999, k: "k1", c: 1, val: "v1"}}}},
+			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
+		},
+		{
+			// existing set, duplicate delta
+			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
+			state{deltas: []delta{delta{repair: false, ttl: 1, vc: vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
+			state{deltas: []delta{delta{repair: false, ttl: 0, vc: vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
+			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
 		},
 	} {
 		target, merge := testcase.initial, testcase.merge
