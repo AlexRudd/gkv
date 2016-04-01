@@ -2,55 +2,122 @@ package gkv
 
 import (
 	"reflect"
+	"sync"
 	"testing"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/weaveworks/mesh"
-	//	. "github.com/alexrudd/gkv"
 )
 
+func csDeepEquals(a, b clusterState) bool {
+	equal := reflect.DeepEqual(a.self, a.self)
+	equal = equal && reflect.DeepEqual(a.deltas, a.deltas)
+	for p, ans := range a.nodes {
+		bns := b.nodes[p]
+		if bns == nil {
+			return false
+		}
+		equal = equal && reflect.DeepEqual(ans.self, bns.self)
+		equal = equal && reflect.DeepEqual(ans.clock, bns.clock)
+		equal = equal && reflect.DeepEqual(ans.missed, bns.missed)
+		for k, avi := range ans.set {
+			bvi := bns.set[k]
+			if bvi == nil {
+				return false
+			}
+			equal = equal && reflect.DeepEqual(avi.c, bvi.c)
+			equal = equal && reflect.DeepEqual(avi.v, bvi.v)
+		}
+	}
+	for p, bns := range b.nodes {
+		ans := a.nodes[p]
+		if ans == nil {
+			return false
+		}
+		equal = equal && reflect.DeepEqual(ans.self, bns.self)
+		equal = equal && reflect.DeepEqual(ans.clock, bns.clock)
+		equal = equal && reflect.DeepEqual(ans.missed, bns.missed)
+		for k, bvi := range bns.set {
+			avi := ans.set[k]
+			if avi == nil {
+				return false
+			}
+			equal = equal && reflect.DeepEqual(avi.c, bvi.c)
+			equal = equal && reflect.DeepEqual(avi.v, bvi.v)
+		}
+	}
+	return equal
+}
+
 func TestStateMergeReceived(t *testing.T) {
-	for _, testcase := range []struct {
-		initial  state
-		merge    state
-		mergeOut state
-		want     state
+	for _, tc := range []struct {
+		initial clusterState
+		in      clusterState
+		out     clusterState
+		want    clusterState
 	}{
 		{
+			// empty set, empty changes
+			clusterState{nodes: map[mesh.PeerName]*nodeState{}},
+			clusterState{nodes: map[mesh.PeerName]*nodeState{}},
+			clusterState{nodes: map[mesh.PeerName]*nodeState{}},
+			clusterState{nodes: map[mesh.PeerName]*nodeState{}},
+		},
+		{
 			// empty set, valid delta
-			state{set: map[mesh.PeerName]map[string]*vectorclock{}},
-			state{deltas: []delta{delta{repair: false, ttl: 1, vc: vectorclock{o: 999, k: "k1", c: 1, val: "v1"}}}},
-			state{deltas: []delta{delta{repair: false, ttl: 3, vc: vectorclock{o: 999, k: "k1", c: 1, val: "v1"}}}},
-			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 1, val: "v1"}}}},
+			clusterState{nodes: map[mesh.PeerName]*nodeState{}},
+			clusterState{deltas: []delta{delta{false, 123, 3, "k1", valueInstance{1, "v1"}}}},
+			clusterState{deltas: []delta{delta{false, 123, 2, "k1", valueInstance{1, "v1"}}}},
+			clusterState{
+				nodes: map[mesh.PeerName]*nodeState{
+					123: &nodeState{
+						self: 123,
+						mtx:  &sync.RWMutex{},
+						set: map[string]*valueInstance{
+							"k1": &valueInstance{1, "v1"},
+						},
+						clock:  1,
+						missed: map[int]bool{},
+					}}},
 		},
 		{
-			// existing set, newer delta
-			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 1, val: "v1"}}}},
-			state{deltas: []delta{delta{repair: false, ttl: 1, vc: vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
-			state{deltas: []delta{delta{repair: false, ttl: 3, vc: vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
-			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
+			// exisiting set, valid update delta
+			clusterState{
+				nodes: map[mesh.PeerName]*nodeState{
+					123: &nodeState{
+						self: 123,
+						mtx:  &sync.RWMutex{},
+						set: map[string]*valueInstance{
+							"k1": &valueInstance{1, "v1"},
+						},
+						clock:  1,
+						missed: map[int]bool{},
+					}}},
+			clusterState{deltas: []delta{delta{false, 123, 3, "k1", valueInstance{2, "v2"}}}},
+			clusterState{deltas: []delta{delta{false, 123, 2, "k1", valueInstance{2, "v2"}}}},
+			clusterState{
+				nodes: map[mesh.PeerName]*nodeState{
+					123: &nodeState{
+						self: 123,
+						set: map[string]*valueInstance{
+							"k1": &valueInstance{2, "v2"},
+						},
+						clock:  2,
+						missed: map[int]bool{},
+					}}},
 		},
-		{
-			// existing set, older delta
-			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
-			state{deltas: []delta{delta{repair: false, ttl: 1, vc: vectorclock{o: 999, k: "k1", c: 1, val: "v1"}}}},
-			state{deltas: []delta{delta{repair: false, ttl: 0, vc: vectorclock{o: 999, k: "k1", c: 1, val: "v1"}}}},
-			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
-		},
-		{
-			// existing set, duplicate delta
-			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
-			state{deltas: []delta{delta{repair: false, ttl: 1, vc: vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
-			state{deltas: []delta{delta{repair: false, ttl: 0, vc: vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
-			state{set: map[mesh.PeerName]map[string]*vectorclock{999: map[string]*vectorclock{"k1": &vectorclock{o: 999, k: "k1", c: 2, val: "v2"}}}},
-		},
+		//exiting set, valid new key delta
+		//exiting set, invalid (lower clock) update delta
+		//exiting set, invalid (equal clock) update delta
+		//exiting set, valid (skipped clock) update delta (requests repair)
+		//exiting set, valid (skipped clock) update delta (requests repair) followed by repairing update
 	} {
-		target, merge := testcase.initial, testcase.merge
-		out := target.Merge(&merge).(*state)
-		if !reflect.DeepEqual(testcase.want.set, target.set) {
-			t.Errorf("Check state failed:\ninitial: %v\nmerged: %v\nwant: %v\nhave: %v", testcase.initial, merge.deltas, testcase.want.set, target.set)
+		out := *tc.initial.Merge(&tc.in).(*clusterState)
+		if !csDeepEquals(tc.initial, tc.want) {
+			t.Errorf("Check clusterState failed:\nWanted: %s\nGot: %s", spew.Sdump(tc.want), spew.Sdump(tc.initial))
 		}
-		if !reflect.DeepEqual(out.deltas, testcase.mergeOut.deltas) {
-			t.Errorf("Check Merge return failed:\ninitial: %v\nmerged: %v\nwant: %v\nhave: %v", testcase.initial, merge.deltas, testcase.mergeOut.deltas, out.deltas)
+		if !reflect.DeepEqual(out.deltas, tc.out.deltas) {
+			t.Errorf("Check Merge() output failed:\nWanted: %s\nGot: %s", spew.Sdump(tc.out.deltas), spew.Sdump(out.deltas))
 		}
 	}
 }
