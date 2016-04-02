@@ -81,67 +81,88 @@ func (cs *clusterState) Merge(other mesh.GossipData) (complete mesh.GossipData) 
 	cs.mtx.Lock()
 	defer cs.mtx.Unlock()
 	// loop through all recieved deltas
-	cs.logger.Printf("Merging %v recieved deltas", len(other.(*clusterState).deltas))
-	for _, d := range other.(*clusterState).deltas {
-		cs.logger.Printf("Delta: %+v", d)
+	n := len(other.(*clusterState).deltas)
+	for i, d := range other.(*clusterState).deltas {
 		if !d.fix {
 			// is update
 			if cs.nodes[d.p] == nil {
 				// node did not exist
-				cs.logger.Printf("Creating new cluster node: %v", d.p)
 				cs.nodes[d.p] = newNodeState(d.p)
 				// update
-				cs.logger.Printf("Setting key: %v->%v->%v:%v", d.p, d.k, d.vi.c, d.vi.v)
+				cs.logger.Printf("%v/%v deltas: new node with key: %v->%v->%v:%v", i+1, n, d.p, d.k, d.vi.c, d.vi.v)
 				cs.nodes[d.p].set[d.k] = d.vi.copy()
 				cs.nodes[d.p].clock = d.vi.c
 				d.ttl = d.ttl - 1
-				cs.deltas = append(cs.deltas, d)
+				if d.ttl > 0 {
+					cs.deltas = append(cs.deltas, d)
+				}
 			} else if d.vi.c > cs.nodes[d.p].clock {
 				// is new`update, check if clock has skipped
-				for i := cs.nodes[d.p].clock + 1; i < d.vi.c; i++ {
-					cs.nodes[d.p].missed[i] = true
+				for j := cs.nodes[d.p].clock + 1; j < d.vi.c; j++ {
+					cs.nodes[d.p].missed[j] = true
+					cs.logger.Printf("Missed delta clock %v for node %v", j, d.p)
 					f := delta{
 						fix: true,
 						p:   d.p,
 						ttl: 3,
-						vi:  valueInstance{c: i},
+						vi:  valueInstance{c: j},
 					}
 					cs.deltas = append(cs.deltas, f)
 				}
 				// and update
-				cs.logger.Printf("Setting key: %v->%v->%v:%v", d.p, d.k, d.vi.c, d.vi.v)
+				cs.logger.Printf("%v/%v deltas: update key: %v->%v->%v:%v", i+1, n, d.p, d.k, d.vi.c, d.vi.v)
 				cs.nodes[d.p].set[d.k] = d.vi.copy()
 				cs.nodes[d.p].clock = d.vi.c
 				d.ttl = d.ttl - 1
-				cs.deltas = append(cs.deltas, d)
+				if d.ttl > 0 {
+					cs.deltas = append(cs.deltas, d)
+				}
 			} else {
 				// old update
 				if cs.nodes[d.p].missed[d.vi.c] {
 					// missing update!
 					if cs.nodes[d.p].set[d.k] == nil || d.vi.c > cs.nodes[d.p].set[d.k].c {
 						// key doesn't exist or has a lower clock
-						cs.logger.Printf("Setting key: %v->%v->%v:%v", d.p, d.k, d.vi.c, d.vi.v)
+						cs.logger.Printf("%v/%v deltas: repair key: %v->%v->%v:%v", i+1, n, d.p, d.k, d.vi.c, d.vi.v)
 						cs.nodes[d.p].set[d.k] = d.vi.copy()
 						d.ttl = d.ttl - 1
-						cs.deltas = append(cs.deltas, d)
+						if d.ttl > 0 {
+							cs.deltas = append(cs.deltas, d)
+						}
+					} else {
+						// stale repair
+						cs.logger.Printf("%v/%v deltas: stale repair: %v->%v->%v:%v", i+1, n, d.p, d.k, d.vi.c, d.vi.v)
+						d.ttl = d.ttl - 1
+						if d.ttl > 0 {
+							cs.deltas = append(cs.deltas, d)
+						}
 					}
 					cs.nodes[d.p].missed[d.vi.c] = false
 				} else {
+					// repair not needed
+					cs.logger.Printf("%v/%v deltas: already consistent: %v->%v->%v:%v", i+1, n, d.p, d.k, d.vi.c, d.vi.v)
 					d.ttl = d.ttl - 1
-					cs.deltas = append(cs.deltas, d)
+					if d.ttl > 0 {
+						cs.deltas = append(cs.deltas, d)
+					}
 				}
 			}
 		} else {
 			// repair request!
 			if cs.nodes[d.p] == nil {
 				// node did not exist, pass on request
+				cs.logger.Printf("%v/%v deltas: repair request for unknown node %v", i+1, n, d.p)
 				d.ttl = d.ttl - 1
-				cs.deltas = append(cs.deltas, d)
+				if d.ttl > 0 {
+					cs.deltas = append(cs.deltas, d)
+				}
 			} else {
 				// see if we have key with said clock
+				found := false
 				for k, vi := range cs.nodes[d.p].set {
 					if vi.c == d.vi.c {
 						// found key!
+						cs.logger.Printf("%v/%v deltas: repair request fulfilled: %v->%v->%v:%v", i+1, n, d.p, k, vi.c, vi.v)
 						r := delta{
 							p:   d.p,
 							ttl: 3,
@@ -153,7 +174,15 @@ func (cs *clusterState) Merge(other mesh.GossipData) (complete mesh.GossipData) 
 						}
 						// send out repair
 						cs.deltas = append(cs.deltas, r)
+						found = true
 						break
+					}
+				}
+				if !found {
+					cs.logger.Printf("%v/%v deltas: repair request for unknown clock %v", i+1, n, d.vi.c)
+					d.ttl = d.ttl - 1
+					if d.ttl > 0 {
+						cs.deltas = append(cs.deltas, d)
 					}
 				}
 			}
