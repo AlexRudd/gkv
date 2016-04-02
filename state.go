@@ -2,6 +2,7 @@ package gkv
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/weaveworks/mesh"
 	"log"
 	"sync"
@@ -71,7 +72,7 @@ func (vi *valueInstance) copy() *valueInstance {
 	}
 }
 
-func (cs *clusterState) set(key, value string) {
+func (cs *clusterState) Set(key, value string) {
 	// get write lock
 	cs.mtx.Lock()
 	defer cs.mtx.Unlock()
@@ -91,15 +92,33 @@ func (cs *clusterState) set(key, value string) {
 	cs.nodes[cs.self].clock++
 }
 
+func (cs *clusterState) Get(node mesh.PeerName, key string) (string, error) {
+	// get read lock
+	cs.mtx.RLock()
+	defer cs.mtx.RUnlock()
+	// check node exists
+	ns := cs.nodes[node]
+	if ns == nil {
+		return "", errors.New("node not found")
+	}
+	// check key exists
+	vi := ns.set[key]
+	if vi == nil {
+		return "", errors.New("key not found")
+	} else {
+		return vi.V, nil
+	}
+}
+
 // Encode serializes the changes that have been made to this state
 func (cs *clusterState) Encode() [][]byte {
 	// get write lock
 	cs.mtx.Lock()
 	defer cs.mtx.Unlock()
-	//copy and clear deltas
+	// copy and clear deltas
 	out := cs.copyDeltas()
 	cs.Deltas = nil
-	//encode
+	// encode
 	cs.logger.Printf("Encoding %v deltas", len(out.Deltas))
 	b, err := json.Marshal(out)
 	if err != nil {
