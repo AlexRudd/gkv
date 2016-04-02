@@ -71,9 +71,29 @@ func (vi *valueInstance) copy() *valueInstance {
 	}
 }
 
+func (cs *clusterState) set(key, value string) {
+	// get write lock
+	cs.mtx.Lock()
+	defer cs.mtx.Unlock()
+	// set key
+	cs.nodes[cs.self].set[key] = &valueInstance{
+		C: cs.nodes[cs.self].clock + 1,
+		V: value,
+	}
+	// create delta
+	cs.Deltas = append(cs.Deltas, delta{
+		Fix: true,
+		P:   cs.self,
+		Ttl: 3,
+		Vi:  *cs.nodes[cs.self].set[key],
+	})
+	// update clock
+	cs.nodes[cs.self].clock++
+}
+
 // Encode serializes the changes that have been made to this state
 func (cs *clusterState) Encode() [][]byte {
-	// get read lock
+	// get write lock
 	cs.mtx.Lock()
 	defer cs.mtx.Unlock()
 	//copy and clear deltas
