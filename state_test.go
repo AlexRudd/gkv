@@ -13,7 +13,7 @@ import (
 
 func csDeepEquals(a, b clusterState) bool {
 	equal := reflect.DeepEqual(a.self, b.self)
-	equal = equal && reflect.DeepEqual(a.self, b.self)
+	equal = equal && reflect.DeepEqual(a.deltas, b.deltas)
 	for p, ans := range a.nodes {
 		bns := b.nodes[p]
 		if bns == nil {
@@ -52,7 +52,7 @@ func csDeepEquals(a, b clusterState) bool {
 }
 
 func TestStateMergeReceived(t *testing.T) {
-	logger := log.New(os.Stdout, "", log.Ldate|log.Lmicroseconds|log.Lshortfile)
+	logger := log.New(os.Stdout, "TEST ", log.Ldate|log.Lmicroseconds|log.Lshortfile)
 
 	for _, tc := range []struct {
 		description string
@@ -63,22 +63,20 @@ func TestStateMergeReceived(t *testing.T) {
 	}{
 		{
 			"empty set, empty deltas",
-			clusterState{logger: logger, nodes: map[mesh.PeerName]*nodeState{}},
+			clusterState{logger: logger, mtx: &sync.RWMutex{}, nodes: map[mesh.PeerName]*nodeState{}},
 			clusterState{nodes: map[mesh.PeerName]*nodeState{}},
 			clusterState{nodes: map[mesh.PeerName]*nodeState{}},
 			clusterState{logger: logger, nodes: map[mesh.PeerName]*nodeState{}},
 		},
 		{
 			"empty set, valid delta",
-			clusterState{logger: logger, nodes: map[mesh.PeerName]*nodeState{}},
+			clusterState{logger: logger, mtx: &sync.RWMutex{}, nodes: map[mesh.PeerName]*nodeState{}},
 			clusterState{deltas: []delta{delta{false, 123, 3, "k1", valueInstance{1, "v1"}}}},
 			clusterState{deltas: []delta{delta{false, 123, 2, "k1", valueInstance{1, "v1"}}}},
 			clusterState{
-				logger: logger,
 				nodes: map[mesh.PeerName]*nodeState{
 					123: &nodeState{
 						self: 123,
-						mtx:  &sync.RWMutex{},
 						set: map[string]*valueInstance{
 							"k1": &valueInstance{1, "v1"},
 						},
@@ -91,10 +89,10 @@ func TestStateMergeReceived(t *testing.T) {
 			"exisiting set, valid update delta",
 			clusterState{
 				logger: logger,
+				mtx:    &sync.RWMutex{},
 				nodes: map[mesh.PeerName]*nodeState{
 					123: &nodeState{
 						self: 123,
-						mtx:  &sync.RWMutex{},
 						set: map[string]*valueInstance{
 							"k1": &valueInstance{1, "v1"},
 						},
@@ -104,7 +102,6 @@ func TestStateMergeReceived(t *testing.T) {
 			clusterState{deltas: []delta{delta{false, 123, 3, "k1", valueInstance{2, "v2"}}}},
 			clusterState{deltas: []delta{delta{false, 123, 2, "k1", valueInstance{2, "v2"}}}},
 			clusterState{
-				logger: logger,
 				nodes: map[mesh.PeerName]*nodeState{
 					123: &nodeState{
 						self: 123,
@@ -120,10 +117,10 @@ func TestStateMergeReceived(t *testing.T) {
 			"existing set, valid new key delta",
 			clusterState{
 				logger: logger,
+				mtx:    &sync.RWMutex{},
 				nodes: map[mesh.PeerName]*nodeState{
 					123: &nodeState{
 						self: 123,
-						mtx:  &sync.RWMutex{},
 						set: map[string]*valueInstance{
 							"k1": &valueInstance{1, "v1"},
 						},
@@ -149,10 +146,10 @@ func TestStateMergeReceived(t *testing.T) {
 			"existing set, invalid (lower clock) update delta",
 			clusterState{
 				logger: logger,
+				mtx:    &sync.RWMutex{},
 				nodes: map[mesh.PeerName]*nodeState{
 					123: &nodeState{
 						self: 123,
-						mtx:  &sync.RWMutex{},
 						set: map[string]*valueInstance{
 							"k1": &valueInstance{2, "v2"},
 						},
@@ -177,10 +174,10 @@ func TestStateMergeReceived(t *testing.T) {
 			"existing set, invalid (equal clock) update delta",
 			clusterState{
 				logger: logger,
+				mtx:    &sync.RWMutex{},
 				nodes: map[mesh.PeerName]*nodeState{
 					123: &nodeState{
 						self: 123,
-						mtx:  &sync.RWMutex{},
 						set: map[string]*valueInstance{
 							"k1": &valueInstance{2, "v2"},
 						},
@@ -205,10 +202,10 @@ func TestStateMergeReceived(t *testing.T) {
 			"existing set, valid (skipped clock) update delta (requests repair)",
 			clusterState{
 				logger: logger,
+				mtx:    &sync.RWMutex{},
 				nodes: map[mesh.PeerName]*nodeState{
 					123: &nodeState{
 						self: 123,
-						mtx:  &sync.RWMutex{},
 						set: map[string]*valueInstance{
 							"k1": &valueInstance{1, "v1"},
 						},
@@ -240,10 +237,10 @@ func TestStateMergeReceived(t *testing.T) {
 			//initial
 			clusterState{
 				logger: logger,
+				mtx:    &sync.RWMutex{},
 				nodes: map[mesh.PeerName]*nodeState{
 					123: &nodeState{
 						self: 123,
-						mtx:  &sync.RWMutex{},
 						set: map[string]*valueInstance{
 							"k1": &valueInstance{1, "v1"},
 						},
@@ -257,9 +254,9 @@ func TestStateMergeReceived(t *testing.T) {
 			}},
 			//out
 			clusterState{deltas: []delta{
-				delta{false, 123, 2, "k2", valueInstance{2, "v1"}},
 				delta{true, 123, 3, "", valueInstance{2, ""}},
 				delta{false, 123, 2, "k1", valueInstance{3, "v2"}},
+				delta{false, 123, 2, "k2", valueInstance{2, "v1"}},
 			}},
 			//want
 			clusterState{
@@ -274,9 +271,72 @@ func TestStateMergeReceived(t *testing.T) {
 						missed: map[int]bool{2: false},
 					}},
 				deltas: []delta{
-					delta{false, 123, 2, "k2", valueInstance{2, "v1"}},
 					delta{true, 123, 3, "", valueInstance{2, ""}},
-					delta{false, 123, 2, "k1", valueInstance{3, "v3"}},
+					delta{false, 123, 2, "k1", valueInstance{3, "v2"}},
+					delta{false, 123, 2, "k2", valueInstance{2, "v1"}},
+				}},
+		},
+		{
+			"empty set, repair request",
+			//initial
+			clusterState{
+				logger: logger,
+				mtx:    &sync.RWMutex{},
+				nodes:  map[mesh.PeerName]*nodeState{},
+			},
+			//in
+			clusterState{deltas: []delta{
+				delta{true, 123, 3, "", valueInstance{2, ""}},
+			}},
+			//out
+			clusterState{deltas: []delta{
+				delta{true, 123, 2, "", valueInstance{2, ""}},
+			},
+			},
+			//want
+			clusterState{
+				nodes:  map[mesh.PeerName]*nodeState{},
+				deltas: []delta{delta{true, 123, 2, "", valueInstance{2, ""}}},
+			},
+		},
+		{
+			"existing set, repair request (known)",
+			//initial
+			clusterState{
+				logger: logger,
+				mtx:    &sync.RWMutex{},
+				nodes: map[mesh.PeerName]*nodeState{
+					123: &nodeState{
+						self: 123,
+						set: map[string]*valueInstance{
+							"k1": &valueInstance{3, "v3"},
+							"k2": &valueInstance{2, "v2"},
+						},
+						clock:  3,
+						missed: map[int]bool{},
+					}}},
+			//in
+			clusterState{deltas: []delta{
+				delta{true, 123, 3, "", valueInstance{2, ""}},
+			}},
+			//out
+			clusterState{deltas: []delta{
+				delta{false, 123, 3, "k2", valueInstance{2, "v2"}},
+			}},
+			//want
+			clusterState{
+				nodes: map[mesh.PeerName]*nodeState{
+					123: &nodeState{
+						self: 123,
+						set: map[string]*valueInstance{
+							"k1": &valueInstance{3, "v3"},
+							"k2": &valueInstance{2, "v2"},
+						},
+						clock:  3,
+						missed: map[int]bool{},
+					}},
+				deltas: []delta{
+					delta{false, 123, 3, "k2", valueInstance{2, "v2"}},
 				}},
 		},
 	} {
